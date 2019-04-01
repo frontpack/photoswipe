@@ -1,0 +1,16 @@
+{
+	"name": "frontpack/photoswipe",
+	"type": "library",
+	"description": "Shim repository for PhotoSwipe",
+	"license": "MIT",
+	"extra": {
+		"assets-files": [
+			"default-skin/",
+			"photoswipe-ui-default.js",
+			"photoswipe-ui-default.min.js",
+			"photoswipe.css",
+			"photoswipe.js",
+			"photoswipe.min.js"
+		]
+	}
+}

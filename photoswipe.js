@@ -1,4 +1,4 @@
-/*! PhotoSwipe - v4.0.3 - 2015-01-03
+/*! PhotoSwipe - v4.0.5 - 2015-01-15
 * http://photoswipe.com
 * Copyright (c) 2015 Dmitry Semenov; */
 (function (root, factory) { 
@@ -336,6 +336,7 @@ var _options = {
     		return item.initialZoomLevel < 0.7 ? 1 : 1.5;
     	}
     },
+    maxSpreadZoom: 2,
 
 	// not fully implemented yet
 	scaleMode: 'fit', // TODO
@@ -371,6 +372,7 @@ var _isOpen,
 	_translatePrefix,
 	_translateSufix,
 	_updateSizeInterval,
+	_itemsNeedUpdate,
 	_currPositionIndex = 0,
 	_offset,
 	_slideSize = _getEmptyPoint(), // size of slide area, including spacing
@@ -549,6 +551,19 @@ var _isOpen,
 			_currPanBounds = bounds;
 		}
 		return bounds;
+	},
+	
+	_getMinZoomLevel = function(item) {
+		if(!item) {
+			item = self.currItem;
+		}
+		return item.initialZoomLevel;
+	},
+	_getMaxZoomLevel = function(item) {
+		if(!item) {
+			item = self.currItem;
+		}
+		return item.w > 0 ? _options.maxSpreadZoom : 1;
 	},
 
 	// Return true if offset is out of the bounds
@@ -1060,7 +1075,9 @@ var publicMethods = {
 		}
 	},
 
+
 	invalidateCurrItems: function() {
+		_itemsNeedUpdate = true;
 		for(var i = 0; i < NUM_HOLDERS; i++) {
 			if( _itemHolders[i].item ) {
 				_itemHolders[i].item.needsUpdate = true;
@@ -1177,22 +1194,28 @@ var publicMethods = {
 				holder = _itemHolders[i];
 				_setTranslateX( (i+_containerShiftIndex) * _slideSize.x, holder.el.style);
 
-				hIndex = holder.index === -1 ? (_currentItemIndex+i-1) : holder.index;
+				hIndex = _getLoopedId(_currentItemIndex+i-1);
 
 				// update zoom level on items and refresh source (if needsUpdate)
 				item = _getItemAt( hIndex );
 
-				if(item.needsUpdate) {
+				// re-render gallery item if `needsUpdate`,
+				// or doesn't have `bounds` (entirely new slide object)
+				if(_itemsNeedUpdate || item.needsUpdate || !item.bounds) {
 
-					self.cleanSlide( item ); 
+					if(item) {
+						self.cleanSlide( item );
+					}
+					
 					self.setContent( holder, hIndex );
 
 					// if "center" slide
 					if(i === 1) {
+						self.currItem = item;
 						self.updateCurrZoomItem(true);
 					}
 
-					item.needsUpdate  = false;
+					item.needsUpdate = false;
 				} else if(holder.index === -1 && hIndex >= 0) {
 					// add content first time
 					self.setContent( holder, hIndex );
@@ -1203,6 +1226,7 @@ var publicMethods = {
 				}
 				
 			}
+			_itemsNeedUpdate = false;
 		}	
 
 		_startZoomLevel = _currZoomLevel = self.currItem.initialZoomLevel;
@@ -1765,32 +1789,35 @@ var _gestureStartTime,
 			}
 
 			// Apply the friction if zoom level is out of the bounds
-			var zoomFriction = 1;
-			if ( zoomLevel < self.currItem.minZoom ) {
+			var zoomFriction = 1,
+				minZoomLevel = _getMinZoomLevel(),
+				maxZoomLevel = _getMaxZoomLevel();
+
+			if ( zoomLevel < minZoomLevel ) {
 				
 				if(_options.pinchToClose && !_wasOverInitialZoom && _startZoomLevel <= self.currItem.initialZoomLevel) {
 					// fade out background if zooming out
-					var minusDiff = self.currItem.minZoom - zoomLevel;
-					var percent = 1 - minusDiff / (self.currItem.minZoom / 1.2);
+					var minusDiff = minZoomLevel - zoomLevel;
+					var percent = 1 - minusDiff / (minZoomLevel / 1.2);
 
 					_applyBgOpacity(percent);
 					_shout('onPinchClose', percent);
 					_opacityChanged = true;
 				} else {
-					zoomFriction = (self.currItem.minZoom - zoomLevel) / (self.currItem.minZoom);
+					zoomFriction = (minZoomLevel - zoomLevel) / minZoomLevel;
 					if(zoomFriction > 1) {
 						zoomFriction = 1;
 					}
-					zoomLevel = self.currItem.minZoom - (zoomFriction) * (self.currItem.minZoom / 3);
+					zoomLevel = minZoomLevel - zoomFriction * (minZoomLevel / 3);
 				}
 				
-			} else if ( zoomLevel > self.currItem.maxZoom ) {
+			} else if ( zoomLevel > maxZoomLevel ) {
 				// 1.5 - extra zoom level above the max. E.g. if max is x6, real max 6 + 1.5 = 7.5
-				zoomFriction = (zoomLevel - self.currItem.maxZoom) / ( self.currItem.minZoom * 6 );
+				zoomFriction = (zoomLevel - maxZoomLevel) / ( minZoomLevel * 6 );
 				if(zoomFriction > 1) {
 					zoomFriction = 1;
 				}
-				zoomLevel = self.currItem.maxZoom + (zoomFriction) * (self.currItem.minZoom);
+				zoomLevel = maxZoomLevel + zoomFriction * minZoomLevel;
 			}
 
 			if(zoomFriction < 0) {
@@ -2323,19 +2350,21 @@ var _gestureStartTime,
 
 	// Resets zoom if it's out of bounds
 	_completeZoomGesture = function() {
-		var destZoomLevel = _currZoomLevel;
+		var destZoomLevel = _currZoomLevel,
+			minZoomLevel = _getMinZoomLevel(),
+			maxZoomLevel = _getMaxZoomLevel();
 
-		if ( _currZoomLevel < self.currItem.minZoom ) {
-			destZoomLevel = self.currItem.minZoom;
-		} else if ( _currZoomLevel > self.currItem.maxZoom ) {
-			destZoomLevel = self.currItem.maxZoom;
+		if ( _currZoomLevel < minZoomLevel ) {
+			destZoomLevel = minZoomLevel;
+		} else if ( _currZoomLevel > maxZoomLevel ) {
+			destZoomLevel = maxZoomLevel;
 		}
 
 		var destOpacity = 1,
 			onUpdate,
 			initialOpacity = _bgOpacity;
 
-		if(_opacityChanged && !_isZoomingIn && !_wasOverInitialZoom && _currZoomLevel < self.currItem.minZoom) {
+		if(_opacityChanged && !_isZoomingIn && !_wasOverInitialZoom && _currZoomLevel < minZoomLevel) {
 			//_closedByScroll = true;
 			self.close();
 			return true;
@@ -2691,7 +2720,7 @@ var _getItemAt,
 				var vRatio = _tempPanAreaSize.y / item.h;
 
 				item.fitRatio = hRatio < vRatio ? hRatio : vRatio;
-				item.fillRatio = hRatio > vRatio ? hRatio : vRatio;
+				//item.fillRatio = hRatio > vRatio ? hRatio : vRatio;
 
 				var scaleMode = _options.scaleMode;
 
@@ -2699,19 +2728,17 @@ var _getItemAt,
 					zoomLevel = 1;
 				} else if (scaleMode === 'fit') {
 					zoomLevel = item.fitRatio;
-				} else if (scaleMode === 'fill') {
-					zoomLevel = item.fillRatio;
 				}
 
 				if (zoomLevel > 1) {
 					zoomLevel = 1;
 				}
+
 				item.initialZoomLevel = zoomLevel;
-				item.maxZoom = 2;
-				item.minZoom = zoomLevel;
 				
 				if(!item.bounds) {
-					item.bounds = _getZeroBounds(); // reuse bounds object
+					// reuse bounds object
+					item.bounds = _getZeroBounds(); 
 				}
 			}
 
@@ -2728,7 +2755,7 @@ var _getItemAt,
 			return item.bounds;
 		} else {
 			item.w = item.h = 0;
-			item.initialZoomLevel = item.maxZoom = item.minZoom = item.fitRatio = item.fillRatio = 1;
+			item.initialZoomLevel = item.fitRatio = 1;
 			item.bounds = _getZeroBounds();
 			item.initialPosition = item.bounds.center;
 
